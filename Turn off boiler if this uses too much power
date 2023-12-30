@@ -1,0 +1,86 @@
+// -*- mode: JavaScript; -*-
+// If total power consumption goes above certain
+// value turn off some devices and/or channels
+
+let CONFIG = {
+  // channels to turn off
+  load_shed_channels: [0],
+  // power threshold
+  maximum_total_power: 150
+};
+
+let boilerShelly = RemoteShelly.getInstance("193.168.100.64");
+let RemoteStatus = 1;
+
+
+let RemoteShelly = {
+  _cb: function (result, error_code, error_message, callback) {
+    let rpcResult = JSON.parse(result.body);
+    let rpcCode = result.code;
+    let rpcMessage = result.message;
+    callback(rpcResult, rpcCode, rpcMessage);
+  },
+  composeEndpoint: function (method) {
+    return "http://" + this.address + "/rpc/" + method;
+  },
+  call: function (rpc, data, callback) {
+    let postData = {
+      url: this.composeEndpoint(rpc),
+      body: data,
+    };
+    Shelly.call("HTTP.POST", postData, RemoteShelly._cb, callback);
+  },
+  getInstance: function (address) {
+    let rs = Object.create(this);
+    // remove static method
+    rs.getInstance = null;
+    rs.address = address;
+    return rs;
+  },
+};
+
+/* 
+boilerShelly.call(
+  "switch.GetStatus",
+  { id: 0 },
+  function (result, error_code, message) {
+    print(JSON.stringify(result), error_code, message);
+    console.log(JSON.stringify(result), error_code, message);
+  }
+);
+*/
+
+function setSwitch(swObj, how) {
+  swObj.call(
+    "switch.set",
+    { id: 0, on: how },
+    function (result, error_code, message) {
+      print(JSON.stringify(result), error_code, message);
+    }
+  );
+}
+
+// monitor status notifications, cull the ones not related to switch and power changes
+// accumulate and calculate the total sum, decide if overpower has occurred and stop other device
+function _status_handler(status_ntf) {
+  if(status_ntf.component.indexOf("switch") !== 0) return;
+  if(typeof status_ntf.delta.apower === "undefined") return;
+
+  if(status_ntf.delta.apower > CONFIG.maximum_total_power) {
+    console.log("Overpower");
+    if(RemoteStatus === 1) {
+      console.log("will shed load...");
+      setSwitch(boilerShelly, false);
+      RemoteStatus = 0;
+    }
+  } else {
+    if(RemoteStatus === 0) 
+    {
+      console.log("OK, will turn load back on...");
+      setSwitch(boilerShelly, true);
+      RemoteStatus = 1;
+    }
+  }  
+}
+
+Shelly.addStatusHandler(_status_handler);
